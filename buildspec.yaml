@@ -11,13 +11,14 @@ phases:
 
   build:
     commands:
-      - echo "🚀 Running CDK Synth to generate CloudFormation template..."
+      - echo "🚀 Running CDK synth to generate CloudFormation template..."
       - cdk synth
-      - ls -al cdk.out/  # Debugging step to confirm output exists
-      - cp cdk.out/SimplePipelineStack.template.json .  # Move template to root
+      - echo "📁 Listing contents of cdk.out directory for debugging..."
+      - ls -al cdk.out/
+      - echo "📂 Copying CloudFormation template to artifact root..."
+      - cp cdk.out/SimplePipelineStack.template.json .
 
 artifacts:
   files:
-    - "SimplePipelineStack.template.json"  # Template must be at root level
-    - "**/*"
-  discard-paths: yes  # Ensures files are not nested
+    - "SimplePipelineStack.template.json"
+  discard-paths: yes
