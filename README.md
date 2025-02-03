@@ -1,4 +1,1 @@
 # testconnection
-
-te
-t
