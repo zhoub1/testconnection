@@ -8,14 +8,14 @@ phases:
       - echo "Installing AWS CDK and dependencies..."
       - npm install -g aws-cdk
       - pip install -r requirements.txt
-      - cdk bootstrap  # Ensure CDK environment is bootstrapped
 
   build:
     commands:
       - echo "Running CDK Synth to generate CloudFormation template..."
       - cdk synth
-      - ls -al cdk.out/  # Debugging step to check if template exists
+      - ls -al cdk.out/  # Debugging step to confirm output exists
 
 artifacts:
   files:
-    - "cdk.out/**"
+    - "**/*"
+  base-directory: cdk.out
