@@ -1,3 +1,2 @@
 # testconnection
 
-test
