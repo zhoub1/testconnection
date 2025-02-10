@@ -5,7 +5,7 @@ class SimplePipelineStack(cdk.Stack):
     def __init__(self, scope: cdk.App, id: str, **kwargs):
         super().__init__(scope, id, **kwargs)
 
-        # Creating a unique S3 bucket
+        # Creating a unique S3 bucket for testing
         bucket = s3.Bucket(
             self, 
             "PIPELINETESTNAMECHANGE021025",
