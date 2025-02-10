@@ -8,7 +8,7 @@ class SimplePipelineStack(cdk.Stack):
         # Creating a unique S3 bucket
         bucket = s3.Bucket(
             self, 
-            "PIPELINETESTNAMECHANGE020625",
+            "PIPELINETESTNAMECHANGE021025",
             versioned=True,
             removal_policy=cdk.RemovalPolicy.DESTROY,
             auto_delete_objects=True
