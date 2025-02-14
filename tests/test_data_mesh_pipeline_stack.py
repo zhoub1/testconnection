@@ -57,7 +57,7 @@ def test_s3_buckets():
         "AWS::S3::Bucket",
         {
             "VersioningConfiguration": {
-                "Status": "Enabled"
+                "Status": "Disabled"
             }
         }
     )
