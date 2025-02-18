@@ -93,7 +93,8 @@ class CdkDatazoneStack(Stack):
                 errors.append(f"Invalid Data Source schedule '{data_source_schedule}'. Schedules must be in cron expression format. Please update the 'data_source_schedule' parameter in your context.")
             if errors:
                 error_message = "\n".join(errors)
-                self.node.add_error(f"Parameter validation failed:\n{error_message}")
+                # Instead of using node.add_error, we simply raise an exception
+                raise ValueError(f"Parameter validation failed:\n{error_message}")
 
         validate_parameters()
 
