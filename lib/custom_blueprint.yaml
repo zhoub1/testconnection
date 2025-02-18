@@ -1,0 +1,88 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Custom DataZone Environment Blueprint Template.
+  Note: This template is for testing custom environments and blueprints in AWS DataZone.
+
+Parameters:
+  ExistingDomainId:
+    Type: String
+    Description: The ID of the existing DataZone domain
+    Default: <DZ_DOMAIN_ID>
+
+  S3BucketName:
+    Type: String
+    Description: The name of the S3 bucket to test actions
+    Default: <S3_BUCKET_NAME>
+
+  DZEnvironment:
+    Type: String
+    Description: The identifier of the DataZone environment
+    Default: <ENVIRONEMENT_ID>
+    
+  DZProject:
+    Type: String
+    Description: The identifier of the DataZone project
+    Default: <PROJECT_ID>
+
+Resources:
+  EnvActionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: "EnvironmentActionBYORRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "datazone.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: "EnvActionAccessPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:*"
+                  - "datazone:*"
+                Resource: "*"
+
+  EnableBlueprint:
+    Type: "AWS::DataZone::EnvironmentBlueprintConfiguration"
+    Properties:
+      DomainIdentifier: !Ref ExistingDomainId
+      EnvironmentBlueprintIdentifier: "CustomAwsService"
+      EnabledRegions:
+        - !Ref "AWS::Region"
+
+  Environment:
+    Type: "AWS::DataZone::Environment"
+    DependsOn: EnableBlueprint
+    Properties:
+      ProjectIdentifier: !Ref DZProject
+      DomainIdentifier: !Ref ExistingDomainId
+      Description: "Testing Environment for Environment Action Integration tests"
+      Name: "BaseEnvironment"
+      EnvironmentBlueprintId: !GetAtt EnableBlueprint.EnvironmentBlueprintId
+      EnvironmentAccountIdentifier: !Ref "AWS::AccountId"
+      EnvironmentAccountRegion: !Ref "AWS::Region"
+      EnvironmentRoleArn: !GetAtt EnvActionRole.Arn
+
+  BasicEnvironmentAction:
+    Type: "AWS::DataZone::EnvironmentActions"
+    DependsOn: Environment
+    Properties:
+      EnvironmentIdentifier: !Ref DZEnvironment
+      DomainIdentifier: !Ref ExistingDomainId
+      Description: "Basic S3 Environment Action"
+      Name: "BasicS3Action"
+      Parameters:
+        Uri: !Sub "https://${AWS::Region}.console.aws.amazon.com/s3/buckets/${S3BucketName}/"
+
+Outputs:
+  EnvironmentBlueprintId:
+    Value: !Ref EnableBlueprint
+    Export:
+      Name: CustomEnvironmentBlueprintId

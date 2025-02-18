@@ -1,0 +1,14 @@
+{
+  "users": [
+    "arn:aws:iam::<ACCOUNT_ID>:user/<USER_NAME>"
+  ],
+  "roles": [
+    "arn:aws:iam::<ACCOUNT_ID>:role/<ROLE_NAME>"
+  ],
+  "databases": [
+    {
+      "name": "my_database",
+      "tables": ["table1", "table2"]
+    }
+  ]
+}
