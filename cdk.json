@@ -1,0 +1,14 @@
+{
+  "app": "python3 app.py",
+  "context": {
+    "domain_name": "dzpipelinetest",
+    "domain_description": "Pipeline test",
+    "project_name": "pipelinetestproj",
+    "environment_name": "pipelineenv",
+    "environment_profile_name": "pipelineenv_profile",
+    "glue_crawler_schedule": "cron(0 8 * * ? *)",
+    "data_source_schedule": "cron(0 9 * * ? *)",
+    "CDK_DEFAULT_REGION": "us-east-1",
+    "CDK_DEFAULT_ACCOUNT": "268072525263"
+  }
+}
