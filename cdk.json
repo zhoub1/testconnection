@@ -1,10 +1,10 @@
 {
   "app": "python3 app.py",
   "context": {
-    "domain_name": "dzpipelinetest",
+    "domain_name": "dzpipelinetest02018",
     "domain_description": "Pipeline test",
     "project_name": "pipelinetestproj",
-    "environment_name": "pipelineenv",
+    "environment_name": "pipelineenv02018",
     "project_owner_identifier": "arn:aws:iam::268072525263:user/zhoub1",
     "environment_profile_name": "pipelineenv_profile",
     "glue_crawler_schedule": "cron(0 8 * * ? *)",
