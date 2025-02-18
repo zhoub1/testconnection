@@ -29,9 +29,17 @@ class TestCdkDatazoneStack(unittest.TestCase):
         # Define the AWS environment (account and region)
         env = Environment(account='123456789012', region='us-east-1')
         
-        # Initialize the CDK app and set the required context variable
+        # Initialize the CDK app (this will load context from cdk.json)
         app = App()
-        app.node.set_context("project_owner_identifier", "arn:aws:iam::268072525263:user/zhoub1")
+        
+        # Retrieve the project_owner_identifier from an environment variable,
+        # or fallback to the value provided in cdk.json.
+        owner_identifier = os.environ.get("PROJECT_OWNER_IDENTIFIER") or app.node.try_get_context("project_owner_identifier")
+        if not owner_identifier:
+            raise ValueError("The 'project_owner_identifier' context must be provided either via cdk.json or the PROJECT_OWNER_IDENTIFIER environment variable.")
+        
+        # Set (or override) the required context variable.
+        app.node.set_context("project_owner_identifier", owner_identifier)
         
         # Instantiate the stack
         self.stack = CdkDatazoneStack(app, "CdkDatazoneStack", env=env)
