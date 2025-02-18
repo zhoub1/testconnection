@@ -1,9 +1,12 @@
 import unittest
 import sys
 import os
+import json
 
-# Add the parent directory to the Python path to allow imports from the 'lib' directory
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Determine the project root (assumed to be one level up from the tests folder)
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Add the project root to the Python path so we can import from 'lib'
+sys.path.append(project_root)
 
 from aws_cdk import App, Environment
 from aws_cdk.assertions import Template, Match
@@ -25,16 +28,32 @@ class TestCdkDatazoneStack(unittest.TestCase):
         Set up the test environment by initializing the CDK app and stack.
 
         This method runs before each test case, ensuring a fresh stack for isolation.
+
+        The CDK App automatically loads context from cdk.json if present in the working directory;
+        however, if the tests run from a different location, we manually load cdk.json from the project root.
+        We then allow an environment variable (PROJECT_OWNER_IDENTIFIER) to override the value if provided.
         """
         # Define the AWS environment (account and region)
         env = Environment(account='123456789012', region='us-east-1')
         
-        # Initialize the CDK app (this will load context from cdk.json)
+        # Initialize the CDK app (this will load context from cdk.json if in the current working directory)
         app = App()
         
-        # Retrieve the project_owner_identifier from an environment variable,
-        # or fallback to the value provided in cdk.json.
-        owner_identifier = os.environ.get("PROJECT_OWNER_IDENTIFIER") or app.node.try_get_context("project_owner_identifier")
+        # Attempt to retrieve the project_owner_identifier from the environment variable
+        owner_identifier = os.environ.get("PROJECT_OWNER_IDENTIFIER")
+        
+        # If not set via env var, try to get it from the App's context (which should come from cdk.json)
+        if not owner_identifier:
+            owner_identifier = app.node.try_get_context("project_owner_identifier")
+        
+        # If still not found, try to manually load it from cdk.json in the project root
+        if not owner_identifier:
+            cdk_json_path = os.path.join(project_root, "cdk.json")
+            if os.path.exists(cdk_json_path):
+                with open(cdk_json_path) as f:
+                    cdk_context = json.load(f).get("context", {})
+                owner_identifier = cdk_context.get("project_owner_identifier")
+        
         if not owner_identifier:
             raise ValueError("The 'project_owner_identifier' context must be provided either via cdk.json or the PROJECT_OWNER_IDENTIFIER environment variable.")
         
