@@ -5,6 +5,7 @@
     "domain_description": "Pipeline test",
     "project_name": "pipelinetestproj",
     "environment_name": "pipelineenv",
+    "project_owner_identifier": "arn:aws:iam::268072525263:user/zhoub1",
     "environment_profile_name": "pipelineenv_profile",
     "glue_crawler_schedule": "cron(0 8 * * ? *)",
     "data_source_schedule": "cron(0 9 * * ? *)",
