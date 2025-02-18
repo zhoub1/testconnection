@@ -29,8 +29,9 @@ class TestCdkDatazoneStack(unittest.TestCase):
         # Define the AWS environment (account and region)
         env = Environment(account='123456789012', region='us-east-1')
         
-        # Initialize the CDK app
+        # Initialize the CDK app and set the required context variable
         app = App()
+        app.node.set_context("project_owner_identifier", "arn:aws:iam::268072525263:user/zhoub1")
         
         # Instantiate the stack
         self.stack = CdkDatazoneStack(app, "CdkDatazoneStack", env=env)
@@ -273,13 +274,6 @@ class TestCdkDatazoneStack(unittest.TestCase):
                             bucket_ref,
                             "Fn::Join part[1] should contain 'Ref'."
                         )
-                        # Optionally, verify the Ref value if known
-                        # Example:
-                        # self.assertEqual(
-                        #     bucket_ref["Ref"],
-                        #     "S3DataSourceBucket",
-                        #     "Fn::Join part[1] should reference the correct bucket."
-                        # )
                     elif isinstance(path, str):
                         # If Path is a string, ensure it contains the expected bucket name
                         self.assertIn(
