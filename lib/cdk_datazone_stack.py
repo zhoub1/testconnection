@@ -418,9 +418,9 @@ class CdkDatazoneStack(Stack):
             self,
             "RegisterS3Location",
             resource_arn=s3_data_source.bucket_arn,
-            role_arn=domain_exec_role.role_arn,
-            use_service_linked_role=False
+            use_service_linked_role=True  # <--- use the built-in Lake Formation service-linked role
         )
+
         register_s3_location.node.add_dependency(datazone_environment)
 
         # 16. Glue Crawler Role
