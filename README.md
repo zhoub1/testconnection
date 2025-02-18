@@ -3,6 +3,7 @@
 This project provides a highly configurable AWS Cloud Development Kit (CDK) solution to simplify and accelerate the deployment of AWS DataZone environments. By automating core DataZone components alongside services like S3, Glue, IAM, and Lake Formation, this CDK project delivers a sleek, modern foundation for data management, governance, and analytics.
 ---
 
+
 ### Overview
 
 The AWS DataZone CDK solution makes deploying a scalable data zone fast and consistent. It integrates essential AWS services—including Amazon S3, AWS Glue, IAM, and Lake Formation—to create an environment optimized for data management and governance.
