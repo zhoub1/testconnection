@@ -12,7 +12,6 @@ from aws_cdk import (
 )
 from constructs import Construct
 import json
-import boto3
 
 class CdkDatazoneStack(Stack):
     r"""               
@@ -59,32 +58,12 @@ class CdkDatazoneStack(Stack):
 
         # Helper functions for name sanitization
         def sanitize_name(name, pattern, max_length, allowed_chars, name_type, description):
-            """
-            Validates and sanitizes a name based on the provided regex pattern and allowed characters.
-
-            Args:
-                name (str): The name to validate and sanitize.
-                pattern (str): The regex pattern the name must match.
-                max_length (int): The maximum allowed length of the name.
-                allowed_chars (str): A string of allowed characters.
-                name_type (str): The type of name (used in error messages).
-                description (str): Description of the naming rules (used in error messages).
-
-            Returns:
-                str: The sanitized name, truncated to max_length.
-
-            Raises:
-                ValueError: If the name does not match the pattern.
-            """
             if not re.match(pattern, name):
                 raise ValueError(f"Invalid {name_type} '{name}'. {description}")
             sanitized = ''.join(c if c in allowed_chars else '-' for c in name)
             return sanitized[:max_length]
 
         def sanitize_bucket_name(name):
-            # Bucket names must be between 3 and 63 characters long
-            # Must be lowercase letters, numbers, and hyphens
-            # Must start and end with a letter or number
             name = name.lower()
             name = re.sub(r'[^a-z0-9-]', '-', name)
             name = re.sub(r'^-+', '', name)
@@ -99,37 +78,23 @@ class CdkDatazoneStack(Stack):
         # Validate parameters
         def validate_parameters():
             errors = []
-
-            # Validate domain_name
             if not re.match(r'^[A-Za-z0-9]+$', domain_name):
                 errors.append(f"Invalid domain name '{domain_name}'. Domain names can only contain letters and numbers (no special characters or spaces). Please update the 'domain_name' parameter in your context.")
-
-            # Validate project_name
             if not re.match(r'^[a-z0-9]+$', project_name):
                 errors.append(f"Invalid project name '{project_name}'. Project names can only contain lowercase letters and numbers (no uppercase letters, special characters, or spaces). Please update the 'project_name' parameter in your context.")
-
-            # Validate environment_name
             if not re.match(r'^[a-z]+$', environment_name):
                 errors.append(f"Invalid environment name '{environment_name}'. Environment names can only contain lowercase letters (no numbers, special characters, or spaces). Please update the 'environment_name' parameter in your context.")
-
-            # Validate environment_profile_name
             if not re.match(r'^[A-Za-z0-9_-]+$', environment_profile_name):
                 errors.append(f"Invalid environment profile name '{environment_profile_name}'. Environment profile names can only contain letters, numbers, underscores, and hyphens (no spaces or other special characters). Please update the 'environment_profile_name' parameter in your context.")
-
-            # Validate glue_crawler_schedule and data_source_schedule
             cron_pattern = r'^cron\(.+\)$'
             if not re.match(cron_pattern, glue_crawler_schedule):
                 errors.append(f"Invalid Glue Crawler schedule '{glue_crawler_schedule}'. Schedules must be in cron expression format. Please update the 'glue_crawler_schedule' parameter in your context.")
-
             if not re.match(cron_pattern, data_source_schedule):
                 errors.append(f"Invalid Data Source schedule '{data_source_schedule}'. Schedules must be in cron expression format. Please update the 'data_source_schedule' parameter in your context.")
-
             if errors:
                 error_message = "\n".join(errors)
-                # Use CDK's node.add_error for validation errors
                 self.node.add_error(f"Parameter validation failed:\n{error_message}")
 
-        # Call the validate_parameters function
         validate_parameters()
 
         # Sanitize parameters
@@ -141,7 +106,6 @@ class CdkDatazoneStack(Stack):
             name_type='domain name',
             description='Domain names can only contain letters and numbers (no special characters or spaces). Please update the "domain_name" parameter in your context.'
         )
-
         project_name = sanitize_name(
             project_name,
             pattern=r'^[a-z0-9]+$',
@@ -150,7 +114,6 @@ class CdkDatazoneStack(Stack):
             name_type='project name',
             description='Project names can only contain lowercase letters and numbers (no uppercase letters, special characters, or spaces). Please update the "project_name" parameter in your context.'
         )
-
         environment_name = sanitize_name(
             environment_name,
             pattern=r'^[a-z]+$',
@@ -159,7 +122,6 @@ class CdkDatazoneStack(Stack):
             name_type='environment name',
             description='Environment names can only contain lowercase letters (no numbers, special characters, or spaces). Please update the "environment_name" parameter in your context.'
         )
-
         environment_profile_name = sanitize_name(
             environment_profile_name,
             pattern=r'^[A-Za-z0-9_-]+$',
@@ -169,14 +131,11 @@ class CdkDatazoneStack(Stack):
             description='Environment profile names can only contain letters, numbers, underscores, and hyphens (no spaces or other special characters). Please update the "environment_profile_name" parameter in your context.'
         )
 
-        # Get the current user's ARN to add as initial project owner
-        try:
-            sts = boto3.client('sts')
-            identity = sts.get_caller_identity()
-            user_arn = identity['Arn']
-        except Exception as e:
-            self.node.add_error("Failed to retrieve user ARN using boto3. Ensure AWS credentials are configured and have the necessary permissions.")
-            user_arn = "arn:aws:iam::123456789012:user/placeholder"
+        # Instead of retrieving the current user's ARN via boto3,
+        # use a context parameter that holds a valid, static project owner identifier.
+        project_owner_identifier = self.node.try_get_context("project_owner_identifier")
+        if not project_owner_identifier:
+            raise ValueError("Context variable 'project_owner_identifier' is required and must be a valid IAM ARN or SSO identifier.")
 
         # S3 Buckets for data source and DataZone system store
         s3_data_source_bucket_name = sanitize_bucket_name(f"datazone-src-{self.account}-{project_name}-{self.region}")
@@ -212,8 +171,6 @@ class CdkDatazoneStack(Stack):
             role_name=lambda_role_name,
             assumed_by=iam.ServicePrincipal("lambda.amazonaws.com")
         )
-
-        # Attach policies to the Lambda execution role
         lambda_exec_role.add_to_policy(iam.PolicyStatement(
             actions=["glue:StartCrawler"],
             resources=[
@@ -248,7 +205,6 @@ class CdkDatazoneStack(Stack):
                 const glue = new AWS.Glue();
 
                 exports.handler = async (event) => {
-                    // Structured logging of the received event
                     console.log(JSON.stringify({
                         level: 'INFO',
                         message: 'Received S3 event',
@@ -259,7 +215,6 @@ class CdkDatazoneStack(Stack):
                     const params = { Name: crawlerName };
 
                     try {
-                        // Attempt to start the Glue crawler
                         const data = await glue.startCrawler(params).promise();
                         console.log(JSON.stringify({
                             level: 'INFO',
@@ -267,14 +222,12 @@ class CdkDatazoneStack(Stack):
                             data: data
                         }));
                     } catch (err) {
-                        // Log error with detailed information
                         console.error(JSON.stringify({
                             level: 'ERROR',
                             message: `Failed to start Glue crawler '${crawlerName}'.`,
                             error: err.message,
                             stack: err.stack
                         }));
-                        // Optionally rethrow the error if needed
                         throw err;
                     }
                 };
@@ -286,16 +239,12 @@ class CdkDatazoneStack(Stack):
             timeout=Duration.seconds(60),
             role=lambda_exec_role
         )
-
-        # Permission for S3 to invoke the Lambda function
         glue_crawler_function.add_permission(
             "LambdaInvokePermission",
             principal=iam.ServicePrincipal("s3.amazonaws.com"),
             action="lambda:InvokeFunction",
             source_arn=s3_data_source.bucket_arn
         )
-
-        # Add S3 notification to trigger Lambda on new object creation
         s3_data_source.add_event_notification(
             s3.EventType.OBJECT_CREATED,
             s3_notifications.LambdaDestination(glue_crawler_function)
@@ -309,8 +258,6 @@ class CdkDatazoneStack(Stack):
             role_name=domain_role_name,
             assumed_by=iam.ServicePrincipal("datazone.amazonaws.com")
         )
-
-        # Custom trust relationship
         domain_exec_role.assume_role_policy.add_statements(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -329,13 +276,9 @@ class CdkDatazoneStack(Stack):
                 }
             )
         )
-
-        # Attach managed policies required by DataZone
         domain_exec_role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name("AmazonAthenaFullAccess"))
         domain_exec_role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AmazonDataZoneDomainExecutionRolePolicy"))
         domain_exec_role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name("AmazonDataZoneRedshiftGlueProvisioningPolicy"))
-
-        # Inline policy for Lake Formation permissions
         domain_exec_role.add_to_policy(iam.PolicyStatement(
             actions=[
                 "lakeformation:GrantPermissions",
@@ -362,14 +305,10 @@ class CdkDatazoneStack(Stack):
             ],
             resources=["*"]
         ))
-
-        # Inline policy for IAM permissions
         domain_exec_role.add_to_policy(iam.PolicyStatement(
             actions=["iam:GetRole", "iam:GetUser"],
             resources=["*"]
         ))
-
-        # Inline policy for logging
         domain_exec_role.add_to_policy(iam.PolicyStatement(
             actions=[
                 "logs:CreateLogGroup",
@@ -378,8 +317,6 @@ class CdkDatazoneStack(Stack):
             ],
             resources=[f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/lambda/*"]
         ))
-
-        # Inline policy for specific S3 bucket access
         domain_exec_role.add_to_policy(iam.PolicyStatement(
             actions=[
                 "s3:GetObject",
@@ -396,8 +333,6 @@ class CdkDatazoneStack(Stack):
                 f"{s3_datazone_sys.bucket_arn}/*"
             ]
         ))
-
-        # Tags for domain execution role
         Tags.of(domain_exec_role).add("Project", project_name)
         Tags.of(domain_exec_role).add("Environment", environment_name)
 
@@ -432,15 +367,15 @@ class CdkDatazoneStack(Stack):
         )
         datazone_project.node.add_dependency(datazone_domain)
 
-        # Add the user as an owner of the DataZone project
+        # Use the context-provided project owner identifier instead of an assumed-role ARN
         datazone_project_membership = datazone.CfnProjectMembership(
             self,
             "DataZoneProjectMembership",
             domain_identifier=datazone_domain.attr_id,
             project_identifier=datazone_project.attr_id,
-            designation='PROJECT_OWNER',  # Valid values: 'PROJECT_OWNER', 'PROJECT_CONTRIBUTOR'
+            designation='PROJECT_OWNER',
             member=datazone.CfnProjectMembership.MemberProperty(
-                user_identifier=user_arn  # Use the current user's ARN
+                user_identifier=project_owner_identifier
             )
         )
         datazone_project_membership.node.add_dependency(datazone_project)
@@ -487,7 +422,6 @@ class CdkDatazoneStack(Stack):
             project_identifier=datazone_project.attr_id
         )
         datazone_environment.node.add_dependency(datazone_env_profile)
-        # Add Deletion Policy to the DataZone environment
         datazone_environment.cfn_options.deletion_policy = CfnDeletionPolicy.DELETE
 
         # Data Source configuration
@@ -518,10 +452,7 @@ class CdkDatazoneStack(Stack):
                 timezone="UTC"
             )
         )
-
-        # Add Deletion Policy to the Data Source
         datazone_data_source.cfn_options.deletion_policy = CfnDeletionPolicy.DELETE
-
         datazone_data_source.add_dependency(datazone_environment)
 
         # Register S3 data source location in Lake Formation
@@ -532,7 +463,6 @@ class CdkDatazoneStack(Stack):
             role_arn=domain_exec_role.role_arn,
             use_service_linked_role=False
         )
-        # Ensure the DataZone environment is created before registering the S3 location
         register_s3_location.node.add_dependency(datazone_environment)
 
         # Create a dedicated IAM Role for the Glue Crawler
@@ -543,11 +473,7 @@ class CdkDatazoneStack(Stack):
             role_name=crawler_role_name,
             assumed_by=iam.ServicePrincipal("glue.amazonaws.com")
         )
-
-        # Attach managed policy required by Glue
         crawler_role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSGlueServiceRole"))
-
-        # Inline policy for S3 access
         crawler_role.add_to_policy(iam.PolicyStatement(
             actions=[
                 "s3:GetObject",
@@ -560,8 +486,6 @@ class CdkDatazoneStack(Stack):
                 f"{s3_data_source.bucket_arn}/*"
             ]
         ))
-
-        # Inline policy for Glue database and table access
         crawler_role.add_to_policy(iam.PolicyStatement(
             actions=["glue:GetDatabase", "glue:GetTables", "glue:CreateTable", "glue:UpdateTable"],
             resources=[
@@ -577,14 +501,10 @@ class CdkDatazoneStack(Stack):
                 )
             ]
         ))
-
-        # Inline policy for Lake Formation access
         crawler_role.add_to_policy(iam.PolicyStatement(
             actions=["lakeformation:GetDataAccess"],
             resources=["*"]
         ))
-
-        # Inline policy for logging
         crawler_role.add_to_policy(iam.PolicyStatement(
             actions=[
                 "logs:CreateLogGroup",
@@ -593,12 +513,9 @@ class CdkDatazoneStack(Stack):
             ],
             resources=[f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws-glue/*"]
         ))
-
-        # Tags for crawler role
         Tags.of(crawler_role).add("Project", project_name)
         Tags.of(crawler_role).add("Environment", environment_name)
 
-        # Grant Lake Formation permissions to the Glue Crawler role for the S3 data location
         lakeformation_permissions_crawler_s3 = lakeformation.CfnPermissions(
             self,
             "LakeFormationPermissionsCrawlerS3",
@@ -613,10 +530,8 @@ class CdkDatazoneStack(Stack):
             permissions=["DATA_LOCATION_ACCESS"],
             permissions_with_grant_option=[]
         )
-        # Ensure S3 location is registered before granting permissions
         lakeformation_permissions_crawler_s3.node.add_dependency(register_s3_location)
 
-        # Grant Lake Formation permissions to the Glue Crawler role for the public database
         lakeformation_permissions_crawler_db = lakeformation.CfnPermissions(
             self,
             "LakeFormationPermissionsCrawlerDB",
@@ -628,13 +543,11 @@ class CdkDatazoneStack(Stack):
                     name=f"{environment_name}_pub_db"
                 )
             ),
-            permissions=["ALL"],  # Consider specifying granular permissions in production
+            permissions=["ALL"],
             permissions_with_grant_option=[]
         )
-        # Ensure database exists before granting permissions
         lakeformation_permissions_crawler_db.node.add_dependency(datazone_environment)
 
-        # Glue Crawler Configuration to update partitions
         crawler_configuration = json.dumps({
             "Version": 1.0,
             "CrawlerOutput": {
@@ -643,8 +556,6 @@ class CdkDatazoneStack(Stack):
                 }
             }
         })
-
-        # Glue Crawler definition using the new crawler role
         glue_crawler = glue.CfnCrawler(
             self,
             "GlueCrawler",
@@ -671,7 +582,6 @@ class CdkDatazoneStack(Stack):
         glue_crawler.node.add_dependency(lakeformation_permissions_crawler_s3)
         glue_crawler.node.add_dependency(lakeformation_permissions_crawler_db)
 
-        # Lake Formation permissions for public database to domain execution role
         lakeformation_permissions_role_pub = lakeformation.CfnPermissions(
             self,
             "LakeFormationPermissionsRolePub",
@@ -688,7 +598,6 @@ class CdkDatazoneStack(Stack):
         )
         lakeformation_permissions_role_pub.node.add_dependency(datazone_environment)
 
-        # Lake Formation permissions for subscriber database to domain execution role
         lakeformation_permissions_role_sub = lakeformation.CfnPermissions(
             self,
             "LakeFormationPermissionsRoleSub",
@@ -705,7 +614,6 @@ class CdkDatazoneStack(Stack):
         )
         lakeformation_permissions_role_sub.node.add_dependency(datazone_environment)
 
-        # Outputs for created resources
         CfnOutput(self, "S3DataSourceBucketName", value=s3_data_source.bucket_name)
         CfnOutput(self, "S3DataZoneSysStoreBucketName", value=s3_datazone_sys.bucket_name)
         CfnOutput(self, "GlueCrawlerName", value=glue_crawler.name)
