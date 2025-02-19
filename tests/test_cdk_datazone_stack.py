@@ -29,39 +29,42 @@ class TestCdkDatazoneStack(unittest.TestCase):
 
         This method runs before each test case, ensuring a fresh stack for isolation.
 
-        The CDK App automatically loads context from cdk.json if present in the working directory;
-        however, if the tests run from a different location, we manually load cdk.json from the project root.
-        We then allow an environment variable (PROJECT_OWNER_IDENTIFIER) to override the value if provided.
+        It retrieves the AWS account and region either from environment variables or from the CDK context.
+        This allows an agnostic pipeline template where the values can be provided via configuration,
+        rather than hardcoding them in the test code.
         """
-        # Retrieve account and region from environment variables
-        account = os.environ.get("CDK_DEFAULT_ACCOUNT")
-        region = os.environ.get("CDK_DEFAULT_REGION")
+        # Initialize the CDK app (which may load context from cdk.json)
+        app = App()
+
+        # Try to get the account and region from environment variables first, then from the CDK context.
+        account = os.environ.get("CDK_DEFAULT_ACCOUNT") or app.node.try_get_context("CDK_DEFAULT_ACCOUNT")
+        region = os.environ.get("CDK_DEFAULT_REGION") or app.node.try_get_context("CDK_DEFAULT_REGION")
+
+        # If not provided, raise an error rather than defaulting to hardcoded values.
         if not account or not region:
-            raise ValueError("Environment variables CDK_DEFAULT_ACCOUNT and CDK_DEFAULT_REGION must be set.")
+            raise ValueError(
+                "AWS environment not defined. Please set CDK_DEFAULT_ACCOUNT and CDK_DEFAULT_REGION "
+                "as environment variables or in the CDK context."
+            )
 
         # Define the AWS environment dynamically
         env = Environment(account=account, region=region)
         
-        # Initialize the CDK app (this will load context from cdk.json if in the current working directory)
-        app = App()
-        
-        # Attempt to retrieve the project_owner_identifier from the environment variable
+        # Attempt to retrieve the project_owner_identifier from environment variable, context, or cdk.json.
         owner_identifier = os.environ.get("PROJECT_OWNER_IDENTIFIER")
-        
-        # If not set via env var, try to get it from the App's context (which should come from cdk.json)
         if not owner_identifier:
             owner_identifier = app.node.try_get_context("project_owner_identifier")
-        
-        # If still not found, try to manually load it from cdk.json in the project root
         if not owner_identifier:
             cdk_json_path = os.path.join(project_root, "cdk.json")
             if os.path.exists(cdk_json_path):
                 with open(cdk_json_path) as f:
                     cdk_context = json.load(f).get("context", {})
                 owner_identifier = cdk_context.get("project_owner_identifier")
-        
         if not owner_identifier:
-            raise ValueError("The 'project_owner_identifier' context must be provided either via cdk.json or the PROJECT_OWNER_IDENTIFIER environment variable.")
+            raise ValueError(
+                "The 'project_owner_identifier' context must be provided via environment variable, "
+                "CDK context, or in cdk.json."
+            )
         
         # Set (or override) the required context variable.
         app.node.set_context("project_owner_identifier", owner_identifier)
@@ -308,9 +311,9 @@ class TestCdkDatazoneStack(unittest.TestCase):
                             "Fn::Join part[1] should contain 'Ref'."
                         )
                     elif isinstance(path, str):
-                        # If Path is a string, ensure it contains the expected bucket name
+                        # If Path is a string, check for expected substring
                         self.assertIn(
-                            "datazoneproj-us-east-1",
+                            "datazoneproj",
                             path,
                             "S3Target 'Path' does not contain the expected bucket name."
                         )
