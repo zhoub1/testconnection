@@ -33,8 +33,14 @@ class TestCdkDatazoneStack(unittest.TestCase):
         however, if the tests run from a different location, we manually load cdk.json from the project root.
         We then allow an environment variable (PROJECT_OWNER_IDENTIFIER) to override the value if provided.
         """
-        # Define the AWS environment (account and region)
-        env = Environment(account='123456789012', region='us-east-1')
+        # Retrieve account and region from environment variables
+        account = os.environ.get("CDK_DEFAULT_ACCOUNT")
+        region = os.environ.get("CDK_DEFAULT_REGION")
+        if not account or not region:
+            raise ValueError("Environment variables CDK_DEFAULT_ACCOUNT and CDK_DEFAULT_REGION must be set.")
+
+        # Define the AWS environment dynamically
+        env = Environment(account=account, region=region)
         
         # Initialize the CDK app (this will load context from cdk.json if in the current working directory)
         app = App()
