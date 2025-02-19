@@ -4,7 +4,7 @@
     "glue_input_bucket_name": "testpipelineinputbucket",
     "glue_output_bucket_name": "testpipelineoutbucket",
     "glue_script_bucket_name": "testpipelineinputbucketscriptbz",
-    "glue_script_key": "glue-script2.py",
+    "glue_script_key": "glue_script.py",
     "glue_job_name": "testpipelinejob",
     "project_name": "data-mesh-testpipeline",
     "environment": "development",
