@@ -2,7 +2,7 @@
 
 This project provides a highly configurable AWS Cloud Development Kit (CDK) solution for deploying AWS DataZone environments. It streamlines **data governance, access control, and metadata management** by integrating key AWS services such as **S3, Glue, IAM, and Lake Formation**.  
 
-With automated infrastructure provisioning, least-privilege IAM enforcement, and pre-configured Glue Crawlers, this setup is designed for efficiency, scalability, and security.  
+With automated infrastructure provisioning, least-privilege IAM enforcement, and pre-configured Glue Crawlers, this setup is designed for efficiency, scalability, and security.
 
 ---
 
