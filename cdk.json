@@ -1,12 +1,12 @@
 {
   "app": "python3 app.py",
   "context": {
-    "glue_input_bucket_name": "glue-datamesh-input-bucket021225",
-    "glue_output_bucket_name": "glue-datamesh-output-bucket021225",
-    "glue_script_bucket_name": "glue-datamesh-transformation-script-cdk021225",
+    "glue_input_bucket_name": "testpipelineinputbucket",
+    "glue_output_bucket_name": "testpipelineoutbucket",
+    "glue_script_bucket_name": "testpipelineinputbucketscriptbz",
     "glue_script_key": "glue_script.py",
-    "glue_job_name": "glue-datamesh-job021225",
-    "project_name": "data-mesh-pipeline021225",
+    "glue_job_name": "testpipelinejob",
+    "project_name": "data-mesh-testpipeline",
     "environment": "development",
     "CDK_DEFAULT_REGION": "us-east-1",
     "CDK_DEFAULT_ACCOUNT": "268072525263"
