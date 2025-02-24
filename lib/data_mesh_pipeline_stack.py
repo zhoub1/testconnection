@@ -21,19 +21,10 @@ import re
 class DataMeshPipelineStack(Stack):
     """
     CDK Stack to set up an AWS Glue-based ETL pipeline with S3, Step Functions, and EventBridge integration.
-
-    This stack provisions the following resources:
-    - S3 buckets for input data, output data, and Glue scripts
-    - IAM roles with necessary permissions for AWS Glue and Step Functions
-    - AWS Glue job to process data
-    - AWS Step Functions state machine to orchestrate the Glue job
-    - EventBridge rule to trigger the state machine on S3 object creation
+    This version creates a dedicated bucket for the Glue script and uploads only the required file from the local "scripts" directory.
     """
 
     def __init__(self, scope: Construct, id: str, **kwargs) -> None:
-        """
-        Initialize the DataMeshPipelineStack.
-        """
         super().__init__(scope, id, **kwargs)
 
         # Fetch parameters from context or use defaults
@@ -46,7 +37,6 @@ class DataMeshPipelineStack(Stack):
         project_name = self.node.try_get_context("project_name") or "data-mesh-pipeline"
         environment = self.node.try_get_context("environment") or "production"
 
-        # Validate input parameters
         self.validate_parameters(
             glue_input_bucket_name,
             glue_output_bucket_name,
@@ -65,7 +55,7 @@ class DataMeshPipelineStack(Stack):
         glue_output_bucket_name = self.sanitize_bucket_name(glue_output_bucket_name)
         glue_script_bucket_name = self.sanitize_bucket_name(glue_script_bucket_name)
 
-        # Create S3 buckets
+        # Create S3 buckets for input and output data
         glue_input_bucket = s3.Bucket(
             self,
             'GlueInputBucket',
@@ -95,6 +85,7 @@ class DataMeshPipelineStack(Stack):
             output_bucket_name = glue_output_bucket.bucket_name
             output_bucket_arn = glue_output_bucket.bucket_arn
 
+        # Create a dedicated bucket for the Glue script code
         glue_script_bucket = s3.Bucket(
             self,
             'GlueScriptBucket',
@@ -114,18 +105,24 @@ class DataMeshPipelineStack(Stack):
             ],
         )
 
-        # Deploy the Glue script from the local 'scripts' directory.
-        # Ensure your local file's name exactly matches the glue_script_key.
+        # Deploy the Glue script from your local "scripts" directory.
+        # We use 'include' so that only the file matching glue_script_key (e.g. "glueautomationscript.py") is uploaded.
         glue_script_deployment = s3_deployment.BucketDeployment(
             self,
             'DeployGlueScript',
-            sources=[s3_deployment.Source.asset('scripts')],
+            sources=[s3_deployment.Source.asset(
+                'scripts',
+                # Exclude everything by default...
+                exclude=["**/*"],
+                # ...but include only the file that matches the key.
+                include=[glue_script_key]
+            )],
             destination_bucket=glue_script_bucket,
             destination_key_prefix='',
             retain_on_delete=False,
         )
 
-        # Adjust IAM policy for the Glue job role
+        # Grant the Glue job role permissions to read from all necessary buckets.
         glue_job_role.add_to_policy(
             iam.PolicyStatement(
                 resources=[
@@ -148,7 +145,7 @@ class DataMeshPipelineStack(Stack):
             )
         )
 
-        # Define the Glue job; note the script_location references the expected S3 key.
+        # Define the Glue job; its script_location now points to the script in the dedicated bucket.
         glue_job = glue.CfnJob(
             self,
             'GlueJob',
@@ -172,12 +169,12 @@ class DataMeshPipelineStack(Stack):
             ),
             max_retries=1,
             glue_version='4.0',
-            timeout=2880,  # Timeout in minutes (48 hours)
-            worker_type='G.4X',  # High-capacity worker
+            timeout=2880,
+            worker_type='G.4X',
             number_of_workers=10
         )
 
-        # Ensure the Glue job is created only after the script has been deployed.
+        # Make sure the Glue job is created only after the script is deployed.
         glue_job.node.add_dependency(glue_script_deployment)
 
         glue_job_arn = f"arn:aws:glue:{self.region}:{self.account}:job/{glue_job.name}"
@@ -220,7 +217,7 @@ class DataMeshPipelineStack(Stack):
             )
         )
 
-        # Create a unique log group name using project, environment, account, and region.
+        # Create a unique log group for the Step Functions state machine.
         unique_log_group_name = f"/aws/vendedlogs/states/{project_name}-{environment}-{self.account}-{self.region}-state-machine"
         log_group = logs.LogGroup(
             self,
@@ -230,7 +227,6 @@ class DataMeshPipelineStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # Define the Step Functions Task to trigger the Glue Job
         glue_job_task = tasks.GlueStartJobRun(
             self,
             'StartGlueJob',
@@ -245,14 +241,12 @@ class DataMeshPipelineStack(Stack):
             task_timeout=sfn.Timeout.duration(Duration.hours(2)),
         )
 
-        # Introduce a small delay before starting the Glue job
         wait_before_starting_job = sfn.Wait(
             self,
             'WaitBeforeStartingJob',
             time=sfn.WaitTime.duration(Duration.seconds(10)),
         )
 
-        # Define the State Machine with logging enabled
         state_machine = sfn.StateMachine(
             self,
             f"GlueStateMachine-{re.sub(r'[^a-zA-Z0-9]', '', (project_name[:6] + environment[:4]))}",
@@ -269,7 +263,6 @@ class DataMeshPipelineStack(Stack):
             tracing_enabled=True,
         )
 
-        # Create an EventBridge Rule to trigger the state machine on new S3 object creation.
         rule = events.Rule(
             self,
             f"S3EventRule-{re.sub(r'[^a-zA-Z0-9]', '', (project_name[:6] + environment[:4]))}",
@@ -277,18 +270,13 @@ class DataMeshPipelineStack(Stack):
                 source=['aws.s3'],
                 detail_type=['Object Created'],
                 detail={
-                    'bucket': {
-                        'name': [glue_input_bucket.bucket_name]
-                    },
-                    'object': {
-                        'key': [{'prefix': ''}]
-                    }
+                    'bucket': {'name': [glue_input_bucket.bucket_name]},
+                    'object': {'key': [{'prefix': ''}]}
                 },
             ),
         )
         rule.add_target(targets.SfnStateMachine(state_machine))
 
-        # Outputs for created resources
         CfnOutput(self, 'GlueInputBucketName', value=glue_input_bucket.bucket_name)
         if not data_zone_source_bucket_name:
             CfnOutput(self, 'GlueOutputBucketName', value=glue_output_bucket.bucket_name)
@@ -314,14 +302,12 @@ class DataMeshPipelineStack(Stack):
         ]:
             if not re.match(bucket_name_pattern, param):
                 errors.append(
-                    f"Invalid bucket name '{param}' for '{name}'. "
-                    "Bucket names must be between 3 and 63 characters, and can contain lowercase letters, numbers, periods, and hyphens."
+                    f"Invalid bucket name '{param}' for '{name}'. Bucket names must be between 3 and 63 characters and can contain lowercase letters, numbers, periods, and hyphens."
                 )
         job_name_pattern = r'^[a-zA-Z0-9-_]{1,255}$'
         if not re.match(job_name_pattern, glue_job_name):
             errors.append(
-                f"Invalid Glue job name '{glue_job_name}'. "
-                "Job names can contain letters, numbers, hyphens, and underscores, and must be between 1 and 255 characters."
+                f"Invalid Glue job name '{glue_job_name}'. Job names can contain letters, numbers, hyphens, and underscores, and must be between 1 and 255 characters."
             )
         if not glue_script_key:
             errors.append("Glue script key cannot be empty.")
