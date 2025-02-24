@@ -21,14 +21,16 @@ import re
 class DataMeshPipelineStack(Stack):
     """
     CDK Stack to set up an AWS Glue-based ETL pipeline with S3, Step Functions, and EventBridge integration.
-    This version creates dedicated buckets for input, output, and the Glue script.
-    The Glue script is deployed by explicitly referencing the file from your local directory.
+
+    This version creates dedicated buckets for input data, output data, and a separate bucket for the Glue script.
+    The script is pulled from the local "scripts" folder (which should contain your desired file, e.g. "glueautomationscript.py")
+    and is deployed to the script bucket. The Glue job’s script_location points to that file.
     """
 
     def __init__(self, scope: Construct, id: str, **kwargs) -> None:
         super().__init__(scope, id, **kwargs)
 
-        # Fetch parameters from context or use defaults
+        # Fetch parameters from context or use defaults.
         glue_input_bucket_name = self.node.try_get_context("glue_input_bucket_name") or "default-input-bucket"
         glue_output_bucket_name = self.node.try_get_context("glue_output_bucket_name") or "default-output-bucket"
         glue_script_bucket_name = self.node.try_get_context("glue_script_bucket_name") or "default-script-bucket"
@@ -38,7 +40,7 @@ class DataMeshPipelineStack(Stack):
         project_name = self.node.try_get_context("project_name") or "data-mesh-pipeline"
         environment = self.node.try_get_context("environment") or "production"
 
-        # Validate input parameters
+        # Validate input parameters.
         self.validate_parameters(
             glue_input_bucket_name,
             glue_output_bucket_name,
@@ -48,16 +50,16 @@ class DataMeshPipelineStack(Stack):
             data_zone_source_bucket_name,
         )
 
-        # Apply tags
+        # Apply tags.
         Tags.of(self).add("Project", project_name)
         Tags.of(self).add("Environment", environment)
 
-        # Sanitize bucket names
+        # Sanitize bucket names.
         glue_input_bucket_name = self.sanitize_bucket_name(glue_input_bucket_name)
         glue_output_bucket_name = self.sanitize_bucket_name(glue_output_bucket_name)
         glue_script_bucket_name = self.sanitize_bucket_name(glue_script_bucket_name)
 
-        # Create S3 buckets
+        # Create S3 bucket for input data.
         glue_input_bucket = s3.Bucket(
             self,
             'GlueInputBucket',
@@ -68,6 +70,7 @@ class DataMeshPipelineStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
         )
 
+        # Create (or import) the output bucket.
         if data_zone_source_bucket_name:
             glue_output_bucket = s3.Bucket.from_bucket_name(
                 self, 'DataZoneSourceBucket', data_zone_source_bucket_name
@@ -87,6 +90,7 @@ class DataMeshPipelineStack(Stack):
             output_bucket_name = glue_output_bucket.bucket_name
             output_bucket_arn = glue_output_bucket.bucket_arn
 
+        # Create a dedicated bucket for the Glue script.
         glue_script_bucket = s3.Bucket(
             self,
             'GlueScriptBucket',
@@ -96,7 +100,7 @@ class DataMeshPipelineStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
         )
 
-        # IAM Role for the Glue Job
+        # IAM Role for the Glue Job.
         glue_job_role = iam.Role(
             self,
             f"GlueJobRole-{re.sub(r'[^a-zA-Z0-9]', '', (project_name[:6] + environment[:4]))}",
@@ -106,18 +110,18 @@ class DataMeshPipelineStack(Stack):
             ],
         )
 
-        # Deploy the Glue script by specifying the exact file path.
-        # For example, if glue_script_key is "glueautomationscript.py", the file must reside at "scripts/glueautomationscript.py"
+        # Deploy the Glue script from the local "scripts" folder.
+        # Note: The "scripts" folder should contain your script file at its root (e.g. "glueautomationscript.py").
         glue_script_deployment = s3_deployment.BucketDeployment(
             self,
             'DeployGlueScript',
-            sources=[s3_deployment.Source.asset(f'scripts/{glue_script_key}')],
+            sources=[s3_deployment.Source.asset('scripts')],
             destination_bucket=glue_script_bucket,
             destination_key_prefix='',
             retain_on_delete=False,
         )
 
-        # Grant permissions to the Glue job role
+        # Grant necessary permissions to the Glue job role.
         glue_job_role.add_to_policy(
             iam.PolicyStatement(
                 resources=[
@@ -140,7 +144,8 @@ class DataMeshPipelineStack(Stack):
             )
         )
 
-        # Define the Glue job; script_location references the file in the dedicated script bucket.
+        # Define the Glue job.
+        # The script_location is set to the file in the dedicated script bucket.
         glue_job = glue.CfnJob(
             self,
             'GlueJob',
@@ -174,7 +179,7 @@ class DataMeshPipelineStack(Stack):
 
         glue_job_arn = f"arn:aws:glue:{self.region}:{self.account}:job/{glue_job.name}"
 
-        # IAM Role for Step Functions
+        # IAM Role for Step Functions.
         step_function_role = iam.Role(
             self,
             f"StepFunctionRole-{re.sub(r'[^a-zA-Z0-9]', '', (project_name[:6] + environment[:4]))}",
@@ -212,7 +217,7 @@ class DataMeshPipelineStack(Stack):
             )
         )
 
-        # Create a unique log group for the state machine.
+        # Create a unique log group for the Step Functions state machine.
         unique_log_group_name = f"/aws/vendedlogs/states/{project_name}-{environment}-{self.account}-{self.region}-state-machine"
         log_group = logs.LogGroup(
             self,
