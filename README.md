@@ -15,7 +15,7 @@ cdk/
 │   └── glue_script.py             # AWS Glue job script
 ├── tests/                         # Unit tests for the CDK stack
 │   └── test_data_mesh_pipeline_stack.py  # Test suite for stack components
-└── cdk.json                       # CDK context (optional) 
+└── cdk.json                       # CDK context (optional)
 ```
 
 ## Setup Instructions
