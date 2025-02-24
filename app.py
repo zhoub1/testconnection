@@ -3,7 +3,7 @@ import aws_cdk as cdk
 from lib.data_mesh_pipeline_stack import DataMeshPipelineStack
 
 # REPLACE ME WITH UNIQUE STACK NAME IF INVOKING MORE THAN ONCE
-unique_stack_name = f"CDKDataMeshPipelineStack"
+unique_stack_name = f"CDKDataMeshPipelineStackJM"
 
 app = cdk.App()
 
