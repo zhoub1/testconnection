@@ -124,12 +124,11 @@ class DataMeshPipelineStack(Stack):
         )
 
         # Deploy the Glue script from local directory to the script bucket
-        script_source = s3_deployment.Source.asset('scripts')  # Update this path as needed
-
-        s3_deployment.BucketDeployment(
+        # Ensure that the file in your local 'scripts' directory matches the glue_script_key exactly.
+        glue_script_deployment = s3_deployment.BucketDeployment(
             self,
             'DeployGlueScript',
-            sources=[script_source],
+            sources=[s3_deployment.Source.asset('scripts')],
             destination_bucket=glue_script_bucket,
             destination_key_prefix='',
             retain_on_delete=False,
@@ -158,7 +157,7 @@ class DataMeshPipelineStack(Stack):
             )
         )
 
-    # Define the AWS Glue job with increased capacity
+        # Define the AWS Glue job with increased capacity
         glue_job = glue.CfnJob(
             self,
             'GlueJob',
@@ -187,6 +186,8 @@ class DataMeshPipelineStack(Stack):
             number_of_workers=10  # Increase the number of workers as needed
         )
 
+        # Ensure that the Glue job only gets created after the script deployment has finished.
+        glue_job.node.add_dependency(glue_script_deployment)
 
         # Construct the Glue Job ARN for IAM policies
         glue_job_arn = f"arn:aws:glue:{self.region}:{self.account}:job/{glue_job.name}"
@@ -276,8 +277,6 @@ class DataMeshPipelineStack(Stack):
             ),
             tracing_enabled=True,
         )
-
-
 
         # EventBridge Rule to trigger the state machine on new S3 object creation
         rule = events.Rule(
