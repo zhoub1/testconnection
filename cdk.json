@@ -9,6 +9,6 @@
     "project_name": "data-mesh-testpipeline",
     "environment": "development",
     "CDK_DEFAULT_REGION": "us-east-1",
-    "CDK_DEFAULT_ACCOUNT": "022591426457"
+    "CDK_DEFAULT_ACCOUNT": "268072525263"
   }
 }
