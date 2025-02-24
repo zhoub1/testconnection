@@ -1,3 +1,5 @@
+import hashlib
+import re
 from aws_cdk import (
     Stack,
     aws_s3 as s3,
@@ -15,32 +17,155 @@ from aws_cdk import (
     Tags,
 )
 from constructs import Construct
-import re
 
+# Embedded Glue script (streamlined and cleaned up)
+EMBEDDED_GLUE_SCRIPT = r'''import sys, logging, pandas as pd
+from datetime import datetime
+from dateutil import parser
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.job import Job
+from awsglue.dynamicframe import DynamicFrame
+from pyspark.sql.functions import trim, col, udf, when, regexp_replace, isnan
+from pyspark.sql.types import *
+from pyspark.sql import DataFrame
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+logger = logging.getLogger()
+
+def init_glue():
+    args = getResolvedOptions(sys.argv, ['JOB_NAME', 'input_path', 'object_key', 'output_path'])
+    sc = SparkContext()
+    glueContext = GlueContext(sc)
+    job = Job(glueContext)
+    job.init(args['JOB_NAME'], args)
+    return glueContext, glueContext.spark_session, job, args
+
+def detect_delim(spark, path, sample_size=10):
+    sc = spark.sparkContext
+    lines = (sc.textFile(path, minPartitions=1)
+               .zipWithIndex()
+               .filter(lambda x: x[1] < sample_size)
+               .map(lambda x: x[0])
+               .collect())
+    possibles = [',', '\t', ';', '|']
+    counts = {d: sum(line.count(d) for line in lines) for d in possibles}
+    delim = max(counts, key=counts.get)
+    logger.info(f"Detected delimiter: {delim}")
+    return delim
+
+def read_csv(spark, path):
+    delim = detect_delim(spark, path)
+    return (spark.read.options(header="true", inferSchema="true", quote='"',
+                               escape='"', multiLine="true", delimiter=delim)
+                  .csv(path))
+
+def read_input(spark, base, key):
+    full_path = f"{base.rstrip('/')}/{key.lstrip('/')}"
+    ext = full_path.split('.')[-1].lower()
+    if ext == 'csv':
+        return read_csv(spark, full_path), ext
+    elif ext == 'txt':
+        return spark.read.text(full_path), ext
+    elif ext == 'xlsx':
+        df = pd.read_excel(full_path, engine='openpyxl')
+        return spark.createDataFrame(df), ext
+    elif ext == 'json':
+        return spark.read.options(multiLine="true").json(full_path), ext
+    elif ext == 'parquet':
+        return spark.read.parquet(full_path), ext
+    elif ext == 'xml':
+        return (spark.read.format("com.databricks.spark.xml")
+                      .option("rowTag", "row")
+                      .load(full_path), ext)
+    else:
+        raise ValueError("Unsupported file format")
+
+def standardize_dates(col_obj, fmts=None):
+    fmts = fmts or ['%Y-%m-%d','%m/%d/%Y','%d/%m/%Y','%Y/%m/%d',
+                    '%Y.%m.%d','%d-%b-%Y','%b %d, %Y','%Y%m%d']
+    def parse_date(s):
+        if not s: 
+            return None
+        for fmt in fmts:
+            try:
+                return datetime.strptime(s, fmt)
+            except Exception:
+                continue
+        try:
+            return parser.parse(s)
+        except Exception:
+            return None
+    return udf(parse_date, TimestampType())(col_obj)
+
+def transform(df: DataFrame) -> DataFrame:
+    for field in df.schema.fields:
+        if isinstance(field.dataType, StringType):
+            df = df.withColumn(field.name, trim(col(field.name)))
+    date_cols = [f.name for f in df.schema.fields if 'date' in f.name.lower()]
+    for d in date_cols:
+        df = df.withColumn(d, standardize_dates(col(d)))
+    num_cols = [f.name for f in df.schema.fields if isinstance(f.dataType, StringType) and 'id' not in f.name.lower()]
+    for n in num_cols:
+        df = df.withColumn(n, when(col(n).rlike('^-?\\d+(\\.\\d+)?$'),
+                                     col(n).cast(DoubleType())).otherwise(col(n)))
+        df = df.withColumn(n, when(col(n).rlike('^-?\\d+(\\.\\d+)?%$'),
+                                     (regexp_replace(col(n), '%', '').cast(DoubleType())/100))
+                                     .otherwise(col(n)))
+    return df
+
+def write_output(glueContext, df, output_base, key, file_type):
+    ts = datetime.utcnow().strftime('%Y-%m-%d')
+    base_name = key.split('/')[-1].split('.')[0]
+    out_path = f"{output_base.rstrip('/')}/{base_name}_{file_type}_processed_{ts}/"
+    count = df.count()
+    if count <= 1000000:
+        df = df.coalesce(1)
+    dynf = DynamicFrame.fromDF(df, glueContext, "dynf")
+    glueContext.write_dynamic_frame.from_options(
+        frame=dynf,
+        connection_type="s3",
+        connection_options={"path": out_path},
+        format="parquet"
+    )
+    logger.info(f"Data written to {out_path}")
+
+def main():
+    try:
+        glueContext, spark, job, args = init_glue()
+        df, ext = read_input(spark, args['input_path'], args['object_key'])
+        df = transform(df)
+        write_output(glueContext, df, args['output_path'], args['object_key'], ext)
+        logger.info("Job completed successfully.")
+    except Exception as e:
+        logger.error(f"Job failed: {e}")
+        raise e
+    finally:
+        job.commit()
+
+if __name__ == '__main__':
+    main()'''
 
 class DataMeshPipelineStack(Stack):
     """
     CDK Stack to set up an AWS Glue-based ETL pipeline with S3, Step Functions, and EventBridge integration.
-
-    This version creates dedicated buckets for input data, output data, and a separate bucket for the Glue script.
-    The script is pulled from the local "scripts" folder (which should contain your desired file, e.g. "glueautomationscript.py")
-    and is deployed to the script bucket. The Glue job’s script_location points to that file.
     """
-
     def __init__(self, scope: Construct, id: str, **kwargs) -> None:
         super().__init__(scope, id, **kwargs)
 
-        # Fetch parameters from context or use defaults.
+        # Fetch parameters from context or use defaults
         glue_input_bucket_name = self.node.try_get_context("glue_input_bucket_name") or "default-input-bucket"
         glue_output_bucket_name = self.node.try_get_context("glue_output_bucket_name") or "default-output-bucket"
         glue_script_bucket_name = self.node.try_get_context("glue_script_bucket_name") or "default-script-bucket"
-        glue_script_key = self.node.try_get_context("glue_script_key") or "default-script-key.py"
+        glue_script_key = self.node.try_get_context("glue_script_key") or "glue_script.py"
         glue_job_name = self.node.try_get_context("glue_job_name") or "default-glue-job"
         data_zone_source_bucket_name = self.node.try_get_context("data_zone_source_bucket_name")
         project_name = self.node.try_get_context("project_name") or "data-mesh-pipeline"
-        environment = self.node.try_get_context("environment") or "production"
+        environment = self.node.try_get_context("environment") or "development"
 
-        # Validate input parameters.
+        # Validate input parameters
         self.validate_parameters(
             glue_input_bucket_name,
             glue_output_bucket_name,
@@ -50,16 +175,16 @@ class DataMeshPipelineStack(Stack):
             data_zone_source_bucket_name,
         )
 
-        # Apply tags.
+        # Apply tags to the Stack
         Tags.of(self).add("Project", project_name)
         Tags.of(self).add("Environment", environment)
 
-        # Sanitize bucket names.
+        # Sanitize bucket names
         glue_input_bucket_name = self.sanitize_bucket_name(glue_input_bucket_name)
         glue_output_bucket_name = self.sanitize_bucket_name(glue_output_bucket_name)
         glue_script_bucket_name = self.sanitize_bucket_name(glue_script_bucket_name)
 
-        # Create S3 bucket for input data.
+        # Create S3 Input Bucket for incoming data
         glue_input_bucket = s3.Bucket(
             self,
             'GlueInputBucket',
@@ -70,7 +195,7 @@ class DataMeshPipelineStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
         )
 
-        # Create (or import) the output bucket.
+        # Create or use existing S3 Output Bucket for transformed data
         if data_zone_source_bucket_name:
             glue_output_bucket = s3.Bucket.from_bucket_name(
                 self, 'DataZoneSourceBucket', data_zone_source_bucket_name
@@ -90,7 +215,7 @@ class DataMeshPipelineStack(Stack):
             output_bucket_name = glue_output_bucket.bucket_name
             output_bucket_arn = glue_output_bucket.bucket_arn
 
-        # Create a dedicated bucket for the Glue script.
+        # Create S3 Script Bucket for Glue scripts
         glue_script_bucket = s3.Bucket(
             self,
             'GlueScriptBucket',
@@ -100,7 +225,7 @@ class DataMeshPipelineStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
         )
 
-        # IAM Role for the Glue Job.
+        # IAM Role for the AWS Glue Job
         glue_job_role = iam.Role(
             self,
             f"GlueJobRole-{re.sub(r'[^a-zA-Z0-9]', '', (project_name[:6] + environment[:4]))}",
@@ -110,18 +235,17 @@ class DataMeshPipelineStack(Stack):
             ],
         )
 
-        # Deploy the Glue script from the local "scripts" folder.
-        # Note: The "scripts" folder should contain your script file at its root (e.g. "glueautomationscript.py").
-        glue_script_deployment = s3_deployment.BucketDeployment(
+        # Deploy the embedded Glue script to the script bucket
+        s3_deployment.BucketDeployment(
             self,
             'DeployGlueScript',
-            sources=[s3_deployment.Source.asset('scripts')],
+            sources=[s3_deployment.Source.data(glue_script_key, EMBEDDED_GLUE_SCRIPT)],
             destination_bucket=glue_script_bucket,
             destination_key_prefix='',
             retain_on_delete=False,
         )
 
-        # Grant necessary permissions to the Glue job role.
+        # Add permissions for the Glue job role
         glue_job_role.add_to_policy(
             iam.PolicyStatement(
                 resources=[
@@ -144,8 +268,7 @@ class DataMeshPipelineStack(Stack):
             )
         )
 
-        # Define the Glue job.
-        # The script_location is set to the file in the dedicated script bucket.
+        # Define the AWS Glue Job with increased capacity
         glue_job = glue.CfnJob(
             self,
             'GlueJob',
@@ -169,23 +292,19 @@ class DataMeshPipelineStack(Stack):
             ),
             max_retries=1,
             glue_version='4.0',
-            timeout=2880,
+            timeout=2880,  # 48 hours
             worker_type='G.4X',
             number_of_workers=10
         )
 
-        # Ensure the Glue job is created only after the script is deployed.
-        glue_job.node.add_dependency(glue_script_deployment)
-
         glue_job_arn = f"arn:aws:glue:{self.region}:{self.account}:job/{glue_job.name}"
 
-        # IAM Role for Step Functions.
+        # IAM Role for Step Functions
         step_function_role = iam.Role(
             self,
             f"StepFunctionRole-{re.sub(r'[^a-zA-Z0-9]', '', (project_name[:6] + environment[:4]))}",
             assumed_by=iam.ServicePrincipal('states.amazonaws.com'),
         )
-
         step_function_role.add_to_policy(
             iam.PolicyStatement(
                 resources=[glue_job_arn],
@@ -198,7 +317,6 @@ class DataMeshPipelineStack(Stack):
                 ],
             )
         )
-
         step_function_role.add_to_policy(
             iam.PolicyStatement(
                 resources=[
@@ -217,16 +335,18 @@ class DataMeshPipelineStack(Stack):
             )
         )
 
-        # Create a unique log group for the Step Functions state machine.
-        unique_log_group_name = f"/aws/vendedlogs/states/{project_name}-{environment}-{self.account}-{self.region}-state-machine"
+        # Ninja-level unique log group name:
+        # Generate a unique 4-character suffix using a SHA1 hash of the node's ID.
+        unique_suffix = hashlib.sha1(self.node.id.encode("utf-8")).hexdigest()[:4]
         log_group = logs.LogGroup(
             self,
-            f"StateMachineLogGroup-{re.sub(r'[^a-zA-Z0-9]', '', unique_log_group_name)}",
-            log_group_name=unique_log_group_name,
+            f"StateMachineLogGroup-{re.sub(r'[^a-zA-Z0-9]', '', (project_name[:8] + environment[:6]))}-{unique_suffix}",
+            log_group_name=f"/aws/vendedlogs/states/{project_name}-{environment}-state-machine-{unique_suffix}",
             retention=logs.RetentionDays.ONE_MONTH,
             removal_policy=RemovalPolicy.DESTROY,
         )
 
+        # Step Function Task to trigger the Glue Job
         glue_job_task = tasks.GlueStartJobRun(
             self,
             'StartGlueJob',
@@ -241,12 +361,12 @@ class DataMeshPipelineStack(Stack):
             task_timeout=sfn.Timeout.duration(Duration.hours(2)),
         )
 
+        # Step Function workflow with a wait before starting the Glue Job
         wait_before_starting_job = sfn.Wait(
             self,
             'WaitBeforeStartingJob',
             time=sfn.WaitTime.duration(Duration.seconds(10)),
         )
-
         state_machine = sfn.StateMachine(
             self,
             f"GlueStateMachine-{re.sub(r'[^a-zA-Z0-9]', '', (project_name[:6] + environment[:4]))}",
@@ -263,6 +383,7 @@ class DataMeshPipelineStack(Stack):
             tracing_enabled=True,
         )
 
+        # EventBridge Rule to trigger the state machine on new S3 object creation
         rule = events.Rule(
             self,
             f"S3EventRule-{re.sub(r'[^a-zA-Z0-9]', '', (project_name[:6] + environment[:4]))}",
@@ -270,13 +391,18 @@ class DataMeshPipelineStack(Stack):
                 source=['aws.s3'],
                 detail_type=['Object Created'],
                 detail={
-                    'bucket': {'name': [glue_input_bucket.bucket_name]},
-                    'object': {'key': [{'prefix': ''}]}
+                    'bucket': {
+                        'name': [glue_input_bucket.bucket_name]
+                    },
+                    'object': {
+                        'key': [{'prefix': ''}]
+                    }
                 },
             ),
         )
         rule.add_target(targets.SfnStateMachine(state_machine))
 
+        # CloudFormation Outputs
         CfnOutput(self, 'GlueInputBucketName', value=glue_input_bucket.bucket_name)
         if not data_zone_source_bucket_name:
             CfnOutput(self, 'GlueOutputBucketName', value=glue_output_bucket.bucket_name)
@@ -302,12 +428,14 @@ class DataMeshPipelineStack(Stack):
         ]:
             if not re.match(bucket_name_pattern, param):
                 errors.append(
-                    f"Invalid bucket name '{param}' for '{name}'. Bucket names must be between 3 and 63 characters and can contain lowercase letters, numbers, periods, and hyphens."
+                    f"Invalid bucket name '{param}' for '{name}'. "
+                    "Bucket names must be 3-63 characters using lowercase letters, numbers, periods, and hyphens."
                 )
         job_name_pattern = r'^[a-zA-Z0-9-_]{1,255}$'
         if not re.match(job_name_pattern, glue_job_name):
             errors.append(
-                f"Invalid Glue job name '{glue_job_name}'. Job names can contain letters, numbers, hyphens, and underscores, and must be between 1 and 255 characters."
+                f"Invalid Glue job name '{glue_job_name}'. "
+                "Job names must be 1-255 characters with letters, numbers, hyphens, and underscores."
             )
         if not glue_script_key:
             errors.append("Glue script key cannot be empty.")
