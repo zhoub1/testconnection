@@ -21,7 +21,8 @@ import re
 class DataMeshPipelineStack(Stack):
     """
     CDK Stack to set up an AWS Glue-based ETL pipeline with S3, Step Functions, and EventBridge integration.
-    This version creates a dedicated bucket for the Glue script and uploads only the required file from the local "scripts" directory.
+    This version creates dedicated buckets for input, output, and the Glue script.
+    The Glue script is deployed by explicitly referencing the file from your local directory.
     """
 
     def __init__(self, scope: Construct, id: str, **kwargs) -> None:
@@ -37,6 +38,7 @@ class DataMeshPipelineStack(Stack):
         project_name = self.node.try_get_context("project_name") or "data-mesh-pipeline"
         environment = self.node.try_get_context("environment") or "production"
 
+        # Validate input parameters
         self.validate_parameters(
             glue_input_bucket_name,
             glue_output_bucket_name,
@@ -55,7 +57,7 @@ class DataMeshPipelineStack(Stack):
         glue_output_bucket_name = self.sanitize_bucket_name(glue_output_bucket_name)
         glue_script_bucket_name = self.sanitize_bucket_name(glue_script_bucket_name)
 
-        # Create S3 buckets for input and output data
+        # Create S3 buckets
         glue_input_bucket = s3.Bucket(
             self,
             'GlueInputBucket',
@@ -85,7 +87,6 @@ class DataMeshPipelineStack(Stack):
             output_bucket_name = glue_output_bucket.bucket_name
             output_bucket_arn = glue_output_bucket.bucket_arn
 
-        # Create a dedicated bucket for the Glue script code
         glue_script_bucket = s3.Bucket(
             self,
             'GlueScriptBucket',
@@ -105,24 +106,18 @@ class DataMeshPipelineStack(Stack):
             ],
         )
 
-        # Deploy the Glue script from your local "scripts" directory.
-        # We use 'include' so that only the file matching glue_script_key (e.g. "glueautomationscript.py") is uploaded.
+        # Deploy the Glue script by specifying the exact file path.
+        # For example, if glue_script_key is "glueautomationscript.py", the file must reside at "scripts/glueautomationscript.py"
         glue_script_deployment = s3_deployment.BucketDeployment(
             self,
             'DeployGlueScript',
-            sources=[s3_deployment.Source.asset(
-                'scripts',
-                # Exclude everything by default...
-                exclude=["**/*"],
-                # ...but include only the file that matches the key.
-                include=[glue_script_key]
-            )],
+            sources=[s3_deployment.Source.asset(f'scripts/{glue_script_key}')],
             destination_bucket=glue_script_bucket,
             destination_key_prefix='',
             retain_on_delete=False,
         )
 
-        # Grant the Glue job role permissions to read from all necessary buckets.
+        # Grant permissions to the Glue job role
         glue_job_role.add_to_policy(
             iam.PolicyStatement(
                 resources=[
@@ -145,7 +140,7 @@ class DataMeshPipelineStack(Stack):
             )
         )
 
-        # Define the Glue job; its script_location now points to the script in the dedicated bucket.
+        # Define the Glue job; script_location references the file in the dedicated script bucket.
         glue_job = glue.CfnJob(
             self,
             'GlueJob',
@@ -174,7 +169,7 @@ class DataMeshPipelineStack(Stack):
             number_of_workers=10
         )
 
-        # Make sure the Glue job is created only after the script is deployed.
+        # Ensure the Glue job is created only after the script is deployed.
         glue_job.node.add_dependency(glue_script_deployment)
 
         glue_job_arn = f"arn:aws:glue:{self.region}:{self.account}:job/{glue_job.name}"
@@ -217,7 +212,7 @@ class DataMeshPipelineStack(Stack):
             )
         )
 
-        # Create a unique log group for the Step Functions state machine.
+        # Create a unique log group for the state machine.
         unique_log_group_name = f"/aws/vendedlogs/states/{project_name}-{environment}-{self.account}-{self.region}-state-machine"
         log_group = logs.LogGroup(
             self,
