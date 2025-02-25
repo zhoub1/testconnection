@@ -4,7 +4,7 @@
     "domain_name": "dzpipelinetest02018",
     "domain_description": "Pipeline test",
     "project_name": "pipelinetestproj",
-    "environment_name": "pipedztestenvfeb",
+    "environment_name": "pipedztestenvfebbz",
     "project_owner_identifier": "arn:aws:iam::268072525263:user/zhoub1",
     "environment_profile_name": "pipelineenv_profile",
     "glue_crawler_schedule": "cron(0 8 * * ? *)",
