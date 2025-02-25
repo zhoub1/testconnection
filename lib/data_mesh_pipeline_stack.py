@@ -108,10 +108,11 @@ class DataMeshPipelineStack(Stack):
             self,
             'GlueScriptBucket',
             bucket_name=glue_script_bucket_name,
-            removal_policy=RemovalPolicy.DESTROY,
-            auto_delete_objects=True,
+            removal_policy=RemovalPolicy.DESTROY,  # You can keep DESTROY if you manage deletion separately
+            # Removed auto_delete_objects to prevent premature deletion of assets
             encryption=s3.BucketEncryption.S3_MANAGED,
         )
+
 
         # IAM Role for AWS Glue Job with necessary permissions
         glue_job_role = iam.Role(
