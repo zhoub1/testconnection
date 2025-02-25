@@ -33,6 +33,11 @@ class DataMeshPipelineStack(Stack):
     def __init__(self, scope: Construct, id: str, **kwargs) -> None:
         """
         Initialize the DataMeshPipelineStack.
+
+        Args:
+            scope (Construct): The scope in which this construct is defined.
+            id (str): The scoped construct ID.
+            **kwargs: Additional keyword arguments.
         """
         super().__init__(scope, id, **kwargs)
 
@@ -56,16 +61,16 @@ class DataMeshPipelineStack(Stack):
             data_zone_source_bucket_name,
         )
 
-        # Apply tags
+        # Apply tags directly to the Stack
         Tags.of(self).add("Project", project_name)
         Tags.of(self).add("Environment", environment)
 
-        # Sanitize bucket names
+        # Sanitize bucket names to comply with AWS naming requirements
         glue_input_bucket_name = self.sanitize_bucket_name(glue_input_bucket_name)
         glue_output_bucket_name = self.sanitize_bucket_name(glue_output_bucket_name)
         glue_script_bucket_name = self.sanitize_bucket_name(glue_script_bucket_name)
 
-        # Create S3 buckets
+        # Create S3 Input Bucket for incoming data
         glue_input_bucket = s3.Bucket(
             self,
             'GlueInputBucket',
@@ -76,13 +81,16 @@ class DataMeshPipelineStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
         )
 
+        # Create or use existing S3 Output Bucket for transformed data
         if data_zone_source_bucket_name:
+            # Use the provided Data Zone source bucket as the output bucket
             glue_output_bucket = s3.Bucket.from_bucket_name(
                 self, 'DataZoneSourceBucket', data_zone_source_bucket_name
             )
             output_bucket_name = data_zone_source_bucket_name
             output_bucket_arn = f"arn:aws:s3:::{data_zone_source_bucket_name}"
         else:
+            # Create a new output bucket
             glue_output_bucket = s3.Bucket(
                 self,
                 'GlueOutputBucket',
@@ -95,6 +103,7 @@ class DataMeshPipelineStack(Stack):
             output_bucket_name = glue_output_bucket.bucket_name
             output_bucket_arn = glue_output_bucket.bucket_arn
 
+        # Create S3 Script Bucket for Glue scripts
         glue_script_bucket = s3.Bucket(
             self,
             'GlueScriptBucket',
@@ -104,7 +113,7 @@ class DataMeshPipelineStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
         )
 
-        # IAM Role for the Glue Job
+        # IAM Role for AWS Glue Job with necessary permissions
         glue_job_role = iam.Role(
             self,
             f"GlueJobRole-{re.sub(r'[^a-zA-Z0-9]', '', (project_name[:6] + environment[:4]))}",
@@ -114,18 +123,19 @@ class DataMeshPipelineStack(Stack):
             ],
         )
 
-        # Deploy the Glue script from the local 'scripts' directory.
-        # Ensure your local file's name exactly matches the glue_script_key.
-        glue_script_deployment = s3_deployment.BucketDeployment(
+        # Deploy the Glue script from local directory to the script bucket
+        script_source = s3_deployment.Source.asset('scripts')  # Update this path as needed
+
+        s3_deployment.BucketDeployment(
             self,
             'DeployGlueScript',
-            sources=[s3_deployment.Source.asset('scripts')],
+            sources=[script_source],
             destination_bucket=glue_script_bucket,
             destination_key_prefix='',
             retain_on_delete=False,
         )
 
-        # Adjust IAM policy for the Glue job role
+        # Adjust IAM policy for Glue job role
         glue_job_role.add_to_policy(
             iam.PolicyStatement(
                 resources=[
@@ -148,7 +158,7 @@ class DataMeshPipelineStack(Stack):
             )
         )
 
-        # Define the Glue job; note the script_location references the expected S3 key.
+    # Define the AWS Glue job with increased capacity
         glue_job = glue.CfnJob(
             self,
             'GlueJob',
@@ -173,16 +183,15 @@ class DataMeshPipelineStack(Stack):
             max_retries=1,
             glue_version='4.0',
             timeout=2880,  # Timeout in minutes (48 hours)
-            worker_type='G.4X',  # High-capacity worker
-            number_of_workers=10
+            worker_type='G.4X',  # Set the worker type to G.4X for higher capacity
+            number_of_workers=10  # Increase the number of workers as needed
         )
 
-        # Ensure the Glue job is created only after the script has been deployed.
-        glue_job.node.add_dependency(glue_script_deployment)
 
+        # Construct the Glue Job ARN for IAM policies
         glue_job_arn = f"arn:aws:glue:{self.region}:{self.account}:job/{glue_job.name}"
 
-        # IAM Role for Step Functions
+        # IAM Role for Step Functions with necessary permissions
         step_function_role = iam.Role(
             self,
             f"StepFunctionRole-{re.sub(r'[^a-zA-Z0-9]', '', (project_name[:6] + environment[:4]))}",
@@ -220,17 +229,16 @@ class DataMeshPipelineStack(Stack):
             )
         )
 
-        # Create a unique log group name using project, environment, account, and region.
-        unique_log_group_name = f"/aws/vendedlogs/states/{project_name}-{environment}-{self.account}-{self.region}-state-machine"
+        # Logging configuration for the state machine
         log_group = logs.LogGroup(
             self,
-            f"StateMachineLogGroup-{re.sub(r'[^a-zA-Z0-9]', '', unique_log_group_name)}",
-            log_group_name=unique_log_group_name,
+            f"StateMachineLogGroup-{re.sub(r'[^a-zA-Z0-9]', '', (project_name[:8] + environment[:6]))}",
+            log_group_name=f"/aws/vendedlogs/states/{project_name}-{environment}-state-machine",
             retention=logs.RetentionDays.ONE_MONTH,
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # Define the Step Functions Task to trigger the Glue Job
+        # Step Function Task to trigger the Glue Job
         glue_job_task = tasks.GlueStartJobRun(
             self,
             'StartGlueJob',
@@ -245,14 +253,14 @@ class DataMeshPipelineStack(Stack):
             task_timeout=sfn.Timeout.duration(Duration.hours(2)),
         )
 
-        # Introduce a small delay before starting the Glue job
+        # Step Function workflow with a delay before running the Glue job
         wait_before_starting_job = sfn.Wait(
             self,
             'WaitBeforeStartingJob',
             time=sfn.WaitTime.duration(Duration.seconds(10)),
         )
 
-        # Define the State Machine with logging enabled
+        # Define the State Machine using 'definition_body' to fix deprecation warning with a clean, simplified unique ID inline
         state_machine = sfn.StateMachine(
             self,
             f"GlueStateMachine-{re.sub(r'[^a-zA-Z0-9]', '', (project_name[:6] + environment[:4]))}",
@@ -269,7 +277,9 @@ class DataMeshPipelineStack(Stack):
             tracing_enabled=True,
         )
 
-        # Create an EventBridge Rule to trigger the state machine on new S3 object creation.
+
+
+        # EventBridge Rule to trigger the state machine on new S3 object creation
         rule = events.Rule(
             self,
             f"S3EventRule-{re.sub(r'[^a-zA-Z0-9]', '', (project_name[:6] + environment[:4]))}",
@@ -286,6 +296,8 @@ class DataMeshPipelineStack(Stack):
                 },
             ),
         )
+
+        # Add the Step Function as a target for the EventBridge rule
         rule.add_target(targets.SfnStateMachine(state_machine))
 
         # Outputs for created resources
@@ -305,7 +317,23 @@ class DataMeshPipelineStack(Stack):
         glue_job_name: str,
         data_zone_source_bucket_name: str,
     ) -> None:
+        """
+        Validates the input parameters to ensure they meet AWS naming requirements.
+
+        Args:
+            glue_input_bucket_name (str): Name of the input S3 bucket.
+            glue_output_bucket_name (str): Name of the output S3 bucket.
+            glue_script_bucket_name (str): Name of the script S3 bucket.
+            glue_script_key (str): Key (path) to the Glue script in the script bucket.
+            glue_job_name (str): Name of the Glue job.
+            data_zone_source_bucket_name (str): Name of the existing Data Zone source bucket.
+
+        Raises:
+            ValueError: If any of the parameters are invalid.
+        """
         errors = []
+
+        # Validate bucket names
         bucket_name_pattern = r'^[a-z0-9.-]{3,63}$'
         for name, param in [
             ('glue_input_bucket_name', glue_input_bucket_name),
@@ -317,24 +345,43 @@ class DataMeshPipelineStack(Stack):
                     f"Invalid bucket name '{param}' for '{name}'. "
                     "Bucket names must be between 3 and 63 characters, and can contain lowercase letters, numbers, periods, and hyphens."
                 )
+
+        # Validate Glue job name
         job_name_pattern = r'^[a-zA-Z0-9-_]{1,255}$'
         if not re.match(job_name_pattern, glue_job_name):
             errors.append(
                 f"Invalid Glue job name '{glue_job_name}'. "
                 "Job names can contain letters, numbers, hyphens, and underscores, and must be between 1 and 255 characters."
             )
+
+        # Validate Glue script key
         if not glue_script_key:
             errors.append("Glue script key cannot be empty.")
+
         if errors:
             error_message = "\n".join(errors)
             self.node.add_error(f"Parameter validation failed:\n{error_message}")
 
     @staticmethod
     def sanitize_bucket_name(name: str) -> str:
+        """
+        Sanitizes an S3 bucket name to comply with AWS naming requirements.
+
+        Args:
+            name (str): The bucket name to sanitize.
+
+        Returns:
+            str: The sanitized bucket name.
+
+        Raises:
+            ValueError: If the sanitized name does not meet AWS requirements.
+        """
         name = name.lower()
         name = re.sub(r'[^a-z0-9.-]', '-', name)
-        name = re.sub(r'\.\.+', '.', name)
+        name = re.sub(r'\.\.+', '.', name)  # Replace multiple dots with a single dot
         name = name.strip('.-')
         if len(name) < 3 or len(name) > 63:
-            raise ValueError(f"S3 bucket name '{name}' must be between 3 and 63 characters long.")
+            raise ValueError(
+                f"S3 bucket name '{name}' must be between 3 and 63 characters long."
+            )
         return name
