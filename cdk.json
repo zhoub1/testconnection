@@ -3,6 +3,7 @@
   "context": {
     "glue_input_bucket_name": "testpi022425",
     "glue_output_bucket_name": "testpipelineout022425",
+    "data_zone_source_bucket_name": "datazone-src-268072525263-pipebztestbeta-us-east-1",
     "glue_script_bucket_name": "testpipelineinput022425",
     "glue_script_key": "glue_script.py",
     "glue_job_name": "testpipelinejob022425",
