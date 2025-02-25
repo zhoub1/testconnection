@@ -17,6 +17,7 @@ from typing import Tuple, Dict, Any
 # Authors: Bill Zhou & Justin Miles
 
 # Setup logging
+# Test
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 
