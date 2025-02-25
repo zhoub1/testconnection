@@ -1,13 +1,13 @@
 {
   "app": "python3 app.py",
   "context": {
-    "glue_input_bucket_name": "testpipelineinputbucket",
-    "glue_output_bucket_name": "testpipelineoutbucket",
-    "glue_script_bucket_name": "testpipelineinputbucketscriptbz",
+    "glue_input_bucket_name": "testpi022425",
+    "glue_output_bucket_name": "testpipelineout022425",
+    "glue_script_bucket_name": "testpipelineinput022425",
     "glue_script_key": "glue_script.py",
-    "glue_job_name": "testpipelinejob",
-    "project_name": "data-mesh-testpipeline",
-    "environment": "development",
+    "glue_job_name": "testpipelinejob022425",
+    "project_name": "data022425",
+    "environment": "dev",
     "CDK_DEFAULT_REGION": "us-east-1",
     "CDK_DEFAULT_ACCOUNT": "268072525263"
   }
