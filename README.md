@@ -3,7 +3,7 @@
 This project deploys an AWS Glue-based ETL pipeline using AWS CDK (Cloud Development Kit). The pipeline processes CSV files from an S3 input bucket, transforms them using AWS Glue, and writes the transformed data back to an S3 output bucket in Parquet format.
  
 ## Project Structure
-
+ 
 ```bash
 cdk/
 ├── README.md                      # Instructions and documentation
