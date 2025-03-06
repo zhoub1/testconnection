@@ -426,7 +426,9 @@ class CdkDatazoneStack(Stack):
                 "s3:ListBucket",
                 "sqs:ReceiveMessage",
                 "sqs:DeleteMessage",
-                "sqs:GetQueueAttributes"
+                "sqs:GetQueueAttributes",
+                "sqs:GetQueueUrl",
+                "sqs:ChangeMessageVisibility"
             ],
             resources=[
                 s3_data_source.bucket_arn,
@@ -497,6 +499,7 @@ class CdkDatazoneStack(Stack):
 
         crawler_configuration = json.dumps({
             "Version": 1.0,
+            "S3EventBasedCrawler": True,
             "CrawlerOutput": {
                 "Partitions": {
                     "AddOrUpdateBehavior": "InheritFromTable"
