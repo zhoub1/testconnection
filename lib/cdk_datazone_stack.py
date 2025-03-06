@@ -499,7 +499,6 @@ class CdkDatazoneStack(Stack):
 
         crawler_configuration = json.dumps({
             "Version": 1.0,
-            "S3EventBasedCrawler": True,
             "CrawlerOutput": {
                 "Partitions": {
                     "AddOrUpdateBehavior": "InheritFromTable"
