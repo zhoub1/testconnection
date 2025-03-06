@@ -577,6 +577,11 @@ class CdkDatazoneStack(Stack):
                 update_behavior="UPDATE_IN_DATABASE",
                 delete_behavior="LOG"
             ),
+            recrawl_policy=glue.CfnCrawler.RecrawlPolicyProperty(
+            # Use CRAWL_NEW_FOLDERS_ONLY if you only want new sub-folders
+            # or use CRAWL_EVENT_MODE if you want the “crawl based on events” mode
+             recrawl_behavior="CRAWL_EVENT_MODE"
+            ),            
             configuration=crawler_configuration,
             schedule=glue.CfnCrawler.ScheduleProperty(
                 schedule_expression=glue_crawler_schedule
