@@ -515,6 +515,7 @@ class CdkDatazoneStack(Stack):
                     event_queue_arn=sqs_queue.queue_arn
                 )]
             ),
+            recrawl_policy=glue.CfnCrawler.RecrawlPolicyProperty( recrawl_behavior="CRAWL_EVENT_MODE" ),
             table_prefix=f"{environment_name}_pub_",
             schema_change_policy=glue.CfnCrawler.SchemaChangePolicyProperty(
                 update_behavior="UPDATE_IN_DATABASE",
