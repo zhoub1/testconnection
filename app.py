@@ -3,7 +3,7 @@ import aws_cdk as cdk
 from lib.cdk_datazone_stack import CdkDatazoneStack
 
 # REPLACE ME WITH UNIQUE STACK NAME IF INVOKING MORE THAN ONCE
-unique_stack_name = f"datameshstackfrompipeline3"
+unique_stack_name = f"datameshstackfrompipeline4"
 
 app = cdk.App()
 
