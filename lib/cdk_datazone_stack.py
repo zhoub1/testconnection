@@ -8,6 +8,7 @@ from aws_cdk import (
     aws_glue as glue,
     aws_lakeformation as lakeformation,
     aws_datazone as datazone,
+    aws_sqs as sqs,
     Tags
 )
 from constructs import Construct
@@ -44,7 +45,6 @@ class CdkDatazoneStack(Stack):
         * **project_name (String):** The name of the DataZone project. Must contain only lowercase alphanumeric characters.
         * **environment_name (String):** The name of the DataZone environment. Must be composed entirely of lowercase letters.
         * **environment_profile_name (String):** The name of the environment profile. Defines the configuration for the environment.
-        * **glue_crawler_schedule (String, Default: "cron(0 8 * * ? *)"):** Schedule for the Glue Crawler.
         * **data_source_schedule (String, Default: "cron(0 9 * * ? *)"):** Schedule for created data source ingestion.
         """
         # Fetching parameters from context
@@ -53,7 +53,6 @@ class CdkDatazoneStack(Stack):
         project_name = self.node.try_get_context("project_name") or "datazoneproj"
         environment_name = self.node.try_get_context("environment_name") or "datazoneenv"
         environment_profile_name = self.node.try_get_context("environment_profile_name") or "env_profile"
-        glue_crawler_schedule = self.node.try_get_context("glue_crawler_schedule") or "cron(0 8 * * ? *)"
         data_source_schedule = self.node.try_get_context("data_source_schedule") or "cron(0 9 * * ? *)"
 
         # Helper functions for name sanitization
@@ -87,8 +86,6 @@ class CdkDatazoneStack(Stack):
             if not re.match(r'^[A-Za-z0-9_-]+$', environment_profile_name):
                 errors.append(f"Invalid environment profile name '{environment_profile_name}'. Environment profile names can only contain letters, numbers, underscores, and hyphens (no spaces or other special characters). Please update the 'environment_profile_name' parameter in your context.")
             cron_pattern = r'^cron\(.+\)$'
-            if not re.match(cron_pattern, glue_crawler_schedule):
-                errors.append(f"Invalid Glue Crawler schedule '{glue_crawler_schedule}'. Schedules must be in cron expression format. Please update the 'glue_crawler_schedule' parameter in your context.")
             if not re.match(cron_pattern, data_source_schedule):
                 errors.append(f"Invalid Data Source schedule '{data_source_schedule}'. Schedules must be in cron expression format. Please update the 'data_source_schedule' parameter in your context.")
             if errors:
@@ -151,6 +148,35 @@ class CdkDatazoneStack(Stack):
         Tags.of(s3_data_source).add("Project", project_name)
         Tags.of(s3_data_source).add("Environment", environment_name)
 
+        # ------------------------------------------------------------------------------------
+        # Create SQS Queue for event-based Glue crawler
+        # ------------------------------------------------------------------------------------
+        sqs_queue = sqs.Queue(
+            self,
+            "GlueEventQueue",
+            queue_name=f"GlueEventQueue-{project_name}-{environment_name}"[:80]
+        )
+        # Allow S3 to send messages to the SQS queue
+        sqs_queue.add_to_resource_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                principals=[iam.ServicePrincipal("s3.amazonaws.com")],
+                actions=["sqs:SendMessage"],
+                resources=[sqs_queue.queue_arn],
+                conditions={
+                    "ArnEquals": {
+                        "aws:SourceArn": s3_data_source.bucket_arn
+                    }
+                }
+            )
+        )
+
+        # Configure S3 to send event notifications to SQS on object creation
+        s3_data_source.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3_notifications.SqsDestination(sqs_queue)
+        )
+
         s3_datazone_sys_bucket_name = sanitize_bucket_name(f"dzsysstore-{self.account}-{project_name}-{self.region}")
         s3_datazone_sys = s3.Bucket(
             self,
@@ -162,93 +188,6 @@ class CdkDatazoneStack(Stack):
         )
         Tags.of(s3_datazone_sys).add("Project", project_name)
         Tags.of(s3_datazone_sys).add("Environment", environment_name)
-
-        # IAM Role for Lambda execution with necessary permissions
-        lambda_role_name = f"LambdaExecRole-{project_name}-{environment_name}"[:64]
-        lambda_exec_role = iam.Role(
-            self,
-            "LambdaExecutionRole",
-            role_name=lambda_role_name,
-            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com")
-        )
-        lambda_exec_role.add_to_policy(iam.PolicyStatement(
-            actions=["glue:StartCrawler"],
-            resources=[
-                self.format_arn(
-                    service="glue",
-                    resource="crawler",
-                    resource_name=f"{project_name}_{environment_name}_pub_db_crawler"
-                )
-            ]
-        ))
-        lambda_exec_role.add_to_policy(iam.PolicyStatement(
-            actions=[
-                "logs:CreateLogGroup",
-                "logs:CreateLogStream",
-                "logs:PutLogEvents"
-            ],
-            resources=[f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/lambda/*"]
-        ))
-
-        # Lambda function to trigger Glue Crawler on S3 PUT event
-        crawler_name = f"{project_name}_{environment_name}_pub_db_crawler"
-        lambda_function_name = f"GlueCrawlerTriggerFunction-{project_name}-{environment_name}"[:64]
-        glue_crawler_function = _lambda.Function(
-            self,
-            "GlueCrawlerTriggerFunction",
-            function_name=lambda_function_name,
-            runtime=_lambda.Runtime.NODEJS_16_X,
-            handler="index.handler",
-            code=_lambda.Code.from_inline(
-                """
-                const AWS = require('aws-sdk');
-                const glue = new AWS.Glue();
-
-                exports.handler = async (event) => {
-                    console.log(JSON.stringify({
-                        level: 'INFO',
-                        message: 'Received S3 event',
-                        event: event
-                    }));
-
-                    const crawlerName = process.env.CRAWLER_NAME;
-                    const params = { Name: crawlerName };
-
-                    try {
-                        const data = await glue.startCrawler(params).promise();
-                        console.log(JSON.stringify({
-                            level: 'INFO',
-                            message: `Glue crawler '${crawlerName}' started successfully.`,
-                            data: data
-                        }));
-                    } catch (err) {
-                        console.error(JSON.stringify({
-                            level: 'ERROR',
-                            message: `Failed to start Glue crawler '${crawlerName}'.`,
-                            error: err.message,
-                            stack: err.stack
-                        }));
-                        throw err;
-                    }
-                };
-                """
-            ),
-            environment={
-                "CRAWLER_NAME": crawler_name
-            },
-            timeout=Duration.seconds(60),
-            role=lambda_exec_role
-        )
-        glue_crawler_function.add_permission(
-            "LambdaInvokePermission",
-            principal=iam.ServicePrincipal("s3.amazonaws.com"),
-            action="lambda:InvokeFunction",
-            source_arn=s3_data_source.bucket_arn
-        )
-        s3_data_source.add_event_notification(
-            s3.EventType.OBJECT_CREATED,
-            s3_notifications.LambdaDestination(glue_crawler_function)
-        )
 
         # IAM Role for Amazon DataZone Domain Execution
         domain_role_name = f"DZDomainRole-{self.account}-{self.stack_name}"[:64]
@@ -311,7 +250,7 @@ class CdkDatazoneStack(Stack):
         ))
         # *** New inline policy added to grant Glue permissions ***
         domain_exec_role.add_to_policy(iam.PolicyStatement(
-            actions=["glue:GetDatabase", "glue:GetTable"],
+            actions=[ "glue:GetDatabase", "glue:GetDatabases", "glue:GetTable", "glue:GetTables"],
             resources=["*"]
         ))
         domain_exec_role.add_to_policy(iam.PolicyStatement(
@@ -484,11 +423,14 @@ class CdkDatazoneStack(Stack):
                 "s3:GetObject",
                 "s3:PutObject",
                 "s3:DeleteObject",
-                "s3:ListBucket"
+                "s3:ListBucket",
+                "sqs:ReceiveMessage",
+                "sqs:DeleteMessage",
+                "sqs:GetQueueAttributes"
             ],
             resources=[
                 s3_data_source.bucket_arn,
-                f"{s3_data_source.bucket_arn}/*"
+                f"{s3_data_source.bucket_arn}/*", sqs_queue.queue_arn
             ]
         ))
         crawler_role.add_to_policy(iam.PolicyStatement(
@@ -564,12 +506,13 @@ class CdkDatazoneStack(Stack):
         glue_crawler = glue.CfnCrawler(
             self,
             "GlueCrawler",
-            name=crawler_name,
+            name=f"{project_name}_pub_crawler",
             role=crawler_role.role_arn,
             database_name=f"{environment_name}_pub_db",
             targets=glue.CfnCrawler.TargetsProperty(
                 s3_targets=[glue.CfnCrawler.S3TargetProperty(
-                    path=f"s3://{s3_data_source.bucket_name}/"
+                    path=f"s3://{s3_data_source.bucket_name}/",
+                    event_queue_arn=sqs_queue.queue_arn
                 )]
             ),
             table_prefix=f"{environment_name}_pub_",
@@ -577,15 +520,10 @@ class CdkDatazoneStack(Stack):
                 update_behavior="UPDATE_IN_DATABASE",
                 delete_behavior="LOG"
             ),
-            recrawl_policy=glue.CfnCrawler.RecrawlPolicyProperty(
-            # Use CRAWL_NEW_FOLDERS_ONLY if you only want new sub-folders
-            # or use CRAWL_EVENT_MODE if you want the “crawl based on events” mode
-             recrawl_behavior="CRAWL_EVENT_MODE"
-            ),            
             configuration=crawler_configuration,
-            schedule=glue.CfnCrawler.ScheduleProperty(
-                schedule_expression=glue_crawler_schedule
-            )
+            # schedule=glue.CfnCrawler.ScheduleProperty(
+            #     schedule_expression=glue_crawler_schedule
+            # )
         )
         glue_crawler.node.add_dependency(register_s3_location)
         glue_crawler.node.add_dependency(crawler_role)
